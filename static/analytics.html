@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Аналитика системы</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f3f5f7;
+      color: #111827;
+    }
+
+    .app {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      background: #111827;
+      color: white;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn.secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+
+    .status {
+      font-size: 14px;
+      color: #374151;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .card,
+    .panel {
+      background: white;
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+    }
+
+    .metric-title {
+      font-size: 14px;
+      color: #6b7280;
+      margin-bottom: 8px;
+    }
+
+    .metric-value {
+      font-size: 34px;
+      font-weight: 700;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+
+    .list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .list-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #e5e7eb;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      color: #6b7280;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #e5e7eb;
+      font-size: 12px;
+      margin-right: 6px;
+      margin-bottom: 4px;
+    }
+
+    .danger {
+      color: #b91c1c;
+      font-weight: 600;
+    }
+
+    .muted {
+      color: #6b7280;
+    }
+
+    .small {
+      font-size: 12px;
+    }
+
+    .mono {
+      font-family: Consolas, Monaco, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .cards,
+      .grid-2 {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="toolbar">
+      <a href="/" class="btn secondary">Назад в чат</a>
+      <a href="/admin" class="btn secondary">База знаний</a>
+      <a href="/operator" class="btn secondary">Операторские обращения</a>
+      <button id="btnRefresh" class="btn secondary" type="button">Обновить</button>
+      <div id="status" class="status">Загрузка аналитики...</div>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="metric-title">Всего ходов</div>
+        <div id="totalTurns" class="metric-value">0</div>
+      </div>
+      <div class="card">
+        <div class="metric-title">Эскалаций</div>
+        <div id="totalEscalations" class="metric-value">0</div>
+      </div>
+      <div class="card">
+        <div class="metric-title">Тикетов</div>
+        <div id="totalTickets" class="metric-value">0</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h2 class="section-title">Режимы ответа</h2>
+        <div id="answerModes" class="list"></div>
+      </div>
+      <div class="panel">
+        <h2 class="section-title">Статусы тикетов</h2>
+        <div id="ticketStatuses" class="list"></div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h2 class="section-title">Интенты</h2>
+        <div id="intents" class="list"></div>
+      </div>
+      <div class="panel">
+        <h2 class="section-title">Уровни риска</h2>
+        <div id="riskLevels" class="list"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 class="section-title">Последние ходы</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Время</th>
+              <th>Session</th>
+              <th>Вопрос</th>
+              <th>Ответ</th>
+              <th>Метаданные</th>
+            </tr>
+          </thead>
+          <tbody id="recentTurnsBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 class="section-title">Последние тикеты</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Время</th>
+              <th>Session</th>
+              <th>Вопрос</th>
+              <th>Причина</th>
+              <th>Статус</th>
+            </tr>
+          </thead>
+          <tbody id="recentTicketsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const totalTurnsEl = document.getElementById("totalTurns");
+    const totalEscalationsEl = document.getElementById("totalEscalations");
+    const totalTicketsEl = document.getElementById("totalTickets");
+    const answerModesEl = document.getElementById("answerModes");
+    const ticketStatusesEl = document.getElementById("ticketStatuses");
+    const intentsEl = document.getElementById("intents");
+    const riskLevelsEl = document.getElementById("riskLevels");
+    const recentTurnsBodyEl = document.getElementById("recentTurnsBody");
+    const recentTicketsBodyEl = document.getElementById("recentTicketsBody");
+    const btnRefresh = document.getElementById("btnRefresh");
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function renderCountList(container, items) {
+      if (!Array.isArray(items) || items.length === 0) {
+        container.innerHTML = "<div class='muted'>Нет данных</div>";
+        return;
+      }
+
+      container.innerHTML = items.map((item) => `
+        <div class="list-item">
+          <div>${escapeHtml(item.name)}</div>
+          <div><strong>${escapeHtml(item.value)}</strong></div>
+        </div>
+      `).join("");
+    }
+
+    function renderRecentTurns(items) {
+      if (!Array.isArray(items) || items.length === 0) {
+        recentTurnsBodyEl.innerHTML = "<tr><td colspan='6' class='muted'>Нет данных</td></tr>";
+        return;
+      }
+
+      recentTurnsBodyEl.innerHTML = items.map((item) => {
+        const meta = [
+          `<span class="pill">intent: ${escapeHtml(item.intent)}</span>`,
+          `<span class="pill">risk: ${escapeHtml(item.risk_level)}</span>`,
+          `<span class="pill">mode: ${escapeHtml(item.answer_mode)}</span>`,
+          item.escalate_to_human
+            ? `<span class="pill danger">escalate: true</span>`
+            : `<span class="pill">escalate: false</span>`
+        ].join("");
+
+        const reason = item.escalation_reason
+          ? `<div class="small danger">${escapeHtml(item.escalation_reason)}</div>`
+          : "";
+
+        const sources = Array.isArray(item.sources) && item.sources.length > 0
+          ? `<div class="small muted">${item.sources.map((s) => `${escapeHtml(s.source)}#${escapeHtml(s.chunk_index)} (${escapeHtml(s.score)})`).join(", ")}</div>`
+          : "";
+
+        return `
+          <tr>
+            <td>${escapeHtml(item.id)}</td>
+            <td class="small">${escapeHtml(item.created_at)}</td>
+            <td class="small mono">${escapeHtml(item.session_id)}</td>
+            <td>${escapeHtml(item.user_message)}</td>
+            <td>${escapeHtml(item.assistant_answer)}</td>
+            <td>${meta}${reason}${sources}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function renderRecentTickets(items) {
+      if (!Array.isArray(items) || items.length === 0) {
+        recentTicketsBodyEl.innerHTML = "<tr><td colspan='6' class='muted'>Нет данных</td></tr>";
+        return;
+      }
+
+      recentTicketsBodyEl.innerHTML = items.map((item) => `
+        <tr>
+          <td>${escapeHtml(item.id)}</td>
+          <td class="small">${escapeHtml(item.created_at)}</td>
+          <td class="small mono">${escapeHtml(item.session_id)}</td>
+          <td>${escapeHtml(item.user_message)}</td>
+          <td>${escapeHtml(item.escalation_reason)}</td>
+          <td>
+            <span class="pill">${escapeHtml(item.status)}</span>
+            <span class="pill">intent: ${escapeHtml(item.intent)}</span>
+            <span class="pill">risk: ${escapeHtml(item.risk_level)}</span>
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    async function loadAnalytics() {
+      statusEl.textContent = "Загрузка аналитики...";
+
+      try {
+        const response = await fetch("/analytics/data");
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail ?? "Не удалось загрузить аналитику");
+        }
+
+        totalTurnsEl.textContent = data.total_turns ?? 0;
+        totalEscalationsEl.textContent = data.total_escalations ?? 0;
+        totalTicketsEl.textContent = data.total_tickets ?? 0;
+
+        renderCountList(answerModesEl, data.answer_modes);
+        renderCountList(ticketStatusesEl, data.ticket_statuses);
+        renderCountList(intentsEl, data.intents);
+        renderCountList(riskLevelsEl, data.risk_levels);
+        renderRecentTurns(data.recent_turns);
+        renderRecentTickets(data.recent_tickets);
+
+        statusEl.textContent = "Аналитика обновлена";
+      } catch (error) {
+        statusEl.textContent = `Ошибка загрузки аналитики: ${error.message}`;
+      }
+    }
+
+    btnRefresh.addEventListener("click", loadAnalytics);
+    loadAnalytics();
+  </script>
+</body>
+</html>

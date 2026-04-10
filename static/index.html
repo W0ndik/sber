@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Банковский ИИ-помощник</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f3f5f7;
+      color: #1f2937;
+    }
+
+    .app {
+      max-width: 960px;
+      margin: 0 auto;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 24px;
+    }
+
+    .header {
+      margin-bottom: 16px;
+    }
+
+    .title {
+      margin: 0 0 8px;
+      font-size: 28px;
+      font-weight: 700;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: #6b7280;
+      font-size: 14px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      background: #111827;
+      color: white;
+      cursor: pointer;
+      font-size: 14px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn.secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+
+    .status {
+      font-size: 14px;
+      color: #374151;
+    }
+
+    .chat {
+      flex: 1;
+      background: white;
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+      overflow-y: auto;
+      min-height: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .message {
+      max-width: 80%;
+      padding: 12px 14px;
+      border-radius: 14px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    .message.user {
+      align-self: flex-end;
+      background: #dbeafe;
+    }
+
+    .message.assistant {
+      align-self: flex-start;
+      background: #f3f4f6;
+    }
+
+    .meta {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #6b7280;
+    }
+
+    .composer {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .composer textarea {
+      flex: 1;
+      min-height: 88px;
+      max-height: 200px;
+      resize: vertical;
+      border: 1px solid #d1d5db;
+      border-radius: 12px;
+      padding: 12px;
+      font: inherit;
+      outline: none;
+      background: white;
+    }
+
+    .composer textarea:focus {
+      border-color: #2563eb;
+    }
+
+    .composer .btn {
+      align-self: flex-end;
+      min-width: 130px;
+      height: 48px;
+    }
+
+    .hint {
+      margin-top: 10px;
+      font-size: 12px;
+      color: #6b7280;
+    }
+
+    .sources {
+      margin-top: 8px;
+      padding-left: 16px;
+    }
+
+    .sources li {
+      margin-bottom: 4px;
+    }
+
+    .danger {
+      color: #b91c1c;
+      font-weight: 600;
+    }
+
+    .pill {
+      display: inline-block;
+      margin-right: 8px;
+      margin-top: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #e5e7eb;
+      color: #111827;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="header">
+      <h1 class="title">Банковский ИИ-помощник</h1>
+      <p class="subtitle">Локальный MVP техподдержки банка на FastAPI + Saiga + Qdrant</p>
+    </div>
+
+    <div class="toolbar">
+      <button id="btnHealth" class="btn secondary" type="button">Проверить health</button>
+      <button id="btnReindex" class="btn secondary" type="button">Переиндексировать базу знаний</button>
+      <button id="btnReset" class="btn secondary" type="button">Новая сессия</button>
+      <a href="/operator" class="btn secondary">Операторские обращения</a>
+      <div id="status" class="status">Статус: не проверялся</div>
+    </div>
+
+    <div id="chat" class="chat"></div>
+
+    <div class="composer">
+      <textarea id="messageInput" placeholder="Введите вопрос клиента... Например: Как восстановить доступ в мобильный банк?"></textarea>
+      <button id="btnSend" class="btn" type="button">Отправить</button>
+    </div>
+
+    <div class="hint">
+      История хранится в рамках текущей session_id. После кнопки Новая сессия начнётся новый диалог.
+    </div>
+  </div>
+
+  <script>
+    const chatEl = document.getElementById("chat");
+    const statusEl = document.getElementById("status");
+    const inputEl = document.getElementById("messageInput");
+    const btnSend = document.getElementById("btnSend");
+    const btnHealth = document.getElementById("btnHealth");
+    const btnReindex = document.getElementById("btnReindex");
+    const btnReset = document.getElementById("btnReset");
+
+    let sessionId = null;
+    let isBusy = false;
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function addMessage(role, text, extraHtml = "") {
+      const div = document.createElement("div");
+      div.className = `message ${role}`;
+      div.innerHTML = `${escapeHtml(text)}${extraHtml}`;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function setBusy(value) {
+      isBusy = value;
+      btnSend.disabled = value;
+      btnHealth.disabled = value;
+      btnReindex.disabled = value;
+      btnReset.disabled = value;
+      inputEl.disabled = value;
+    }
+
+    async function checkHealth() {
+      setBusy(true);
+      try {
+        const response = await fetch("/health");
+        const data = await response.json();
+
+        if (data.status === "ok") {
+          statusEl.textContent = `Статус: ok | chat=${data.chat_model} | embed=${data.embed_model}`;
+        } else {
+          statusEl.textContent = `Статус: degraded | ${data.error ?? "неизвестная ошибка"}`;
+        }
+      } catch (error) {
+        statusEl.textContent = `Статус: ошибка запроса health: ${error}`;
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function reindexKb() {
+      setBusy(true);
+      try {
+        const response = await fetch("/admin/reindex", {
+          method: "POST"
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail ?? "Ошибка индексации");
+        }
+
+        statusEl.textContent = `Индексация завершена: файлов=${data.files_indexed}, чанков=${data.chunks_indexed}`;
+      } catch (error) {
+        statusEl.textContent = `Ошибка индексации: ${error.message}`;
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function sendMessage() {
+      const message = inputEl.value.trim();
+      if (!message || isBusy) {
+        return;
+      }
+
+      addMessage("user", message);
+      inputEl.value = "";
+      setBusy(true);
+      statusEl.textContent = "Отправка запроса...";
+
+      try {
+        const response = await fetch("/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            message,
+            session_id: sessionId
+          })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail ?? "Ошибка запроса");
+        }
+
+        sessionId = data.session_id;
+
+        let extraHtml = "";
+
+        extraHtml += `<div class="meta"><span class="pill">intent: ${escapeHtml(data.intent)}</span><span class="pill">risk: ${escapeHtml(data.risk_level)}</span><span class="pill">mode: ${escapeHtml(data.answer_mode)}</span></div>`;
+
+        if (data.escalate_to_human) {
+          extraHtml += `<div class="meta danger">Требуется перевод на оператора${data.escalation_reason ? `: ${escapeHtml(data.escalation_reason)}` : ""}</div>`;
+          if (data.operator_ticket_id) {
+            extraHtml += `<div class="meta danger">Создано обращение #${escapeHtml(data.operator_ticket_id)}</div>`;
+          }
+        } else {
+          extraHtml += `<div class="meta">Перевод на оператора не требуется</div>`;
+        }
+
+        if (Array.isArray(data.sources) && data.sources.length > 0) {
+          const items = data.sources
+            .map(
+              (item) =>
+                `<li>${escapeHtml(item.source)} | chunk=${item.chunk_index} | score=${item.score}</li>`
+            )
+            .join("");
+
+          extraHtml += `<div class="meta">Источники:</div><ul class="sources">${items}</ul>`;
+        }
+
+        addMessage("assistant", data.answer, extraHtml);
+        statusEl.textContent = `Готово | session_id=${sessionId}`;
+      } catch (error) {
+        addMessage("assistant", `Ошибка: ${error.message}`);
+        statusEl.textContent = `Ошибка запроса: ${error.message}`;
+      } finally {
+        setBusy(false);
+        inputEl.focus();
+      }
+    }
+
+    btnSend.addEventListener("click", sendMessage);
+
+    inputEl.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+
+    btnHealth.addEventListener("click", checkHealth);
+    btnReindex.addEventListener("click", reindexKb);
+    btnReset.addEventListener("click", () => {
+      sessionId = null;
+      chatEl.innerHTML = "";
+      statusEl.textContent = "Начата новая сессия";
+      inputEl.focus();
+    });
+
+    addMessage(
+      "assistant",
+      "Чат готов. Сначала нажми Проверить health, потом Переиндексировать базу знаний, затем задавай вопрос."
+    );
+  </script>
+</body>
+</html>

@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>База знаний</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f3f5f7;
+      color: #111827;
+    }
+
+    .app {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      background: #111827;
+      color: white;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn.secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+
+    .status {
+      font-size: 14px;
+      color: #374151;
+    }
+
+    .panel {
+      background: white;
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+      margin-bottom: 16px;
+    }
+
+    .file-input {
+      margin-top: 10px;
+      margin-bottom: 12px;
+    }
+
+    .doc-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .doc-item {
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 12px;
+      background: #fafafa;
+    }
+
+    .meta {
+      margin-top: 6px;
+      color: #6b7280;
+      font-size: 14px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    .danger {
+      background: #b91c1c;
+      color: white;
+    }
+
+    code {
+      background: #f3f4f6;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="toolbar">
+      <a href="/" class="btn secondary">Назад в чат</a>
+      <a href="/operator" class="btn secondary">Операторские обращения</a>
+      <button id="btnLoad" class="btn secondary" type="button">Обновить список</button>
+      <button id="btnReindex" class="btn secondary" type="button">Переиндексировать</button>
+      <div id="status" class="status">Статус: не проверялся</div>
+    </div>
+
+    <div class="panel">
+      <h2>Загрузка документов</h2>
+      <div class="meta">Поддерживаются: <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.docx</code></div>
+      <input id="fileInput" class="file-input" type="file" multiple accept=".txt,.md,.pdf,.docx">
+      <div class="actions">
+        <button id="btnUpload" class="btn" type="button">Загрузить</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Документы базы знаний</h2>
+      <div id="docList" class="doc-list"></div>
+    </div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const fileInput = document.getElementById("fileInput");
+    const btnUpload = document.getElementById("btnUpload");
+    const btnLoad = document.getElementById("btnLoad");
+    const btnReindex = document.getElementById("btnReindex");
+    const docListEl = document.getElementById("docList");
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function formatBytes(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    async function loadDocuments() {
+      statusEl.textContent = "Загрузка списка документов...";
+
+      try {
+        const response = await fetch("/admin/documents");
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail ?? "Не удалось загрузить список документов");
+        }
+
+        const documents = Array.isArray(data.documents) ? data.documents : [];
+
+        if (documents.length === 0) {
+          docListEl.innerHTML = "<div class='doc-item'>Документов пока нет.</div>";
+          statusEl.textContent = "Список документов обновлён";
+          return;
+        }
+
+        docListEl.innerHTML = documents.map((doc) => `
+          <div class="doc-item">
+            <div><strong>${escapeHtml(doc.filename)}</strong></div>
+            <div class="meta">Размер: ${formatBytes(doc.size_bytes)}</div>
+            <div class="meta">Изменён: ${escapeHtml(doc.modified_at)}</div>
+            <div class="actions">
+              <button class="btn danger" type="button" onclick="deleteDocument('${encodeURIComponent(doc.filename)}')">Удалить</button>
+            </div>
+          </div>
+        `).join("");
+
+        statusEl.textContent = `Документов: ${documents.length}`;
+      } catch (error) {
+        docListEl.innerHTML = `<div class='doc-item'>Ошибка: ${escapeHtml(error.message)}</div>`;
+        statusEl.textContent = "Ошибка загрузки документов";
+      }
+    }
+
+    async function uploadDocuments() {
+      const files = fileInput.files;
+      if (!files || files.length === 0) {
+        statusEl.textContent = "Сначала выбери хотя бы один файл";
+        return;
+      }
+
+      const formData = new FormData();
+      for (const file of files) {
+        formData.append("files", file);
+      }
+
+      statusEl.textContent = "Загрузка документов...";
+
+      try {
+        const response = await fetch("/admin/upload", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail ?? "Ошибка загрузки");
+        }
+
+        const saved = Array.isArray(data.saved_files) ? data.saved_files.length : 0;
+        const skipped = Array.isArray(data.skipped_files) ? data.skipped_files.length : 0;
+
+        statusEl.textContent = `Загрузка завершена: сохранено=${saved}, пропущено=${skipped}`;
+        fileInput.value = "";
+        await loadDocuments();
+      } catch (error) {
+        statusEl.textContent = `Ошибка загрузки: ${error.message}`;
+      }
+    }
+
+    async function reindexDocuments() {
+      statusEl.textContent = "Индексация базы знаний...";
+
+      try {
+        const response = await fetch("/admin/reindex", {
+          method: "POST"
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail ?? "Ошибка индексации");
+        }
+
+        statusEl.textContent = `Индексация завершена: файлов=${data.files_indexed}, чанков=${data.chunks_indexed}`;
+      } catch (error) {
+        statusEl.textContent = `Ошибка индексации: ${error.message}`;
+      }
+    }
+
+    async function deleteDocument(encodedFilename) {
+      const filename = decodeURIComponent(encodedFilename);
+
+      if (!confirm(`Удалить файл ${filename}?`)) {
+        return;
+      }
+
+      statusEl.textContent = `Удаление ${filename}...`;
+
+      try {
+        const response = await fetch(`/admin/documents/${encodeURIComponent(filename)}`, {
+          method: "DELETE"
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail ?? "Ошибка удаления");
+        }
+
+        statusEl.textContent = `Удалён файл: ${data.filename}`;
+        await loadDocuments();
+      } catch (error) {
+        statusEl.textContent = `Ошибка удаления: ${error.message}`;
+      }
+    }
+
+    window.deleteDocument = deleteDocument;
+
+    btnLoad.addEventListener("click", loadDocuments);
+    btnUpload.addEventListener("click", uploadDocuments);
+    btnReindex.addEventListener("click", reindexDocuments);
+
+    loadDocuments();
+  </script>
+</body>
+</html>

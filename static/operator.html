@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Операторские обращения</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f3f5f7;
+      color: #111827;
+    }
+
+    .app {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      background: #111827;
+      color: white;
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .btn.secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+
+    .status {
+      font-size: 14px;
+      color: #374151;
+    }
+
+    .ticket-list {
+      display: grid;
+      gap: 16px;
+    }
+
+    .ticket {
+      background: white;
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+    }
+
+    .ticket h3 {
+      margin: 0 0 8px;
+    }
+
+    .meta {
+      margin: 6px 0;
+      color: #4b5563;
+      font-size: 14px;
+    }
+
+    .pill {
+      display: inline-block;
+      margin-right: 8px;
+      margin-top: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #e5e7eb;
+      font-size: 12px;
+    }
+
+    .sources {
+      margin-top: 8px;
+      padding-left: 18px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="toolbar">
+      <a href="/" class="btn secondary">Назад в чат</a>
+      <button id="btnRefresh" class="btn secondary" type="button">Обновить</button>
+      <div id="status" class="status">Загрузка обращений...</div>
+    </div>
+
+    <div id="ticketList" class="ticket-list"></div>
+  </div>
+
+  <script>
+    const ticketListEl = document.getElementById("ticketList");
+    const statusEl = document.getElementById("status");
+    const btnRefresh = document.getElementById("btnRefresh");
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    async function updateStatus(ticketId, status) {
+      const response = await fetch(`/operator/tickets/${ticketId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ status })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail ?? "Не удалось обновить статус");
+      }
+
+      await loadTickets();
+    }
+
+    async function loadTickets() {
+      statusEl.textContent = "Загрузка обращений...";
+
+      try {
+        const response = await fetch("/operator/tickets");
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail ?? "Ошибка загрузки обращений");
+        }
+
+        const tickets = Array.isArray(data.tickets) ? data.tickets : [];
+
+        if (tickets.length === 0) {
+          ticketListEl.innerHTML = "<div class='ticket'>Открытых обращений пока нет.</div>";
+          statusEl.textContent = "Обращения загружены";
+          return;
+        }
+
+        ticketListEl.innerHTML = tickets.map((ticket) => {
+          const sourcesHtml = Array.isArray(ticket.sources) && ticket.sources.length > 0
+            ? `<div class="meta">Источники:</div>
+               <ul class="sources">
+                 ${ticket.sources.map((item) => `<li>${escapeHtml(item.source)} | chunk=${item.chunk_index} | score=${item.score}</li>`).join("")}
+               </ul>`
+            : "";
+
+          return `
+            <div class="ticket">
+              <h3>Обращение #${ticket.id}</h3>
+              <div class="meta"><span class="pill">status: ${escapeHtml(ticket.status)}</span><span class="pill">intent: ${escapeHtml(ticket.intent)}</span><span class="pill">risk: ${escapeHtml(ticket.risk_level)}</span></div>
+              <div class="meta"><strong>session_id:</strong> ${escapeHtml(ticket.session_id)}</div>
+              <div class="meta"><strong>Время:</strong> ${escapeHtml(ticket.created_at)}</div>
+              <div class="meta"><strong>Причина эскалации:</strong> ${escapeHtml(ticket.escalation_reason)}</div>
+              <div class="meta"><strong>Вопрос клиента:</strong> ${escapeHtml(ticket.user_message)}</div>
+              ${sourcesHtml}
+              <div class="actions">
+                <button class="btn secondary" onclick="updateStatus(${ticket.id}, 'new')">new</button>
+                <button class="btn secondary" onclick="updateStatus(${ticket.id}, 'in_progress')">in_progress</button>
+                <button class="btn secondary" onclick="updateStatus(${ticket.id}, 'closed')">closed</button>
+              </div>
+            </div>
+          `;
+        }).join("");
+
+        statusEl.textContent = `Загружено обращений: ${tickets.length}`;
+      } catch (error) {
+        ticketListEl.innerHTML = `<div class='ticket'>Ошибка: ${escapeHtml(error.message)}</div>`;
+        statusEl.textContent = "Ошибка загрузки";
+      }
+    }
+
+    btnRefresh.addEventListener("click", loadTickets);
+    loadTickets();
+  </script>
+</body>
+</html>
