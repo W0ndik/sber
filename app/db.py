@@ -129,6 +129,22 @@ class AppDB:
         items = [{"role": row["role"], "content": row["content"]} for row in rows]
         items.reverse()
         return items
+    
+    def count_session_messages(self, session_id: str) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS value
+                FROM chat_messages
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+
+            if row is None:
+                return 0
+
+            return int(row["value"] or 0)
 
     def get_full_history(self, session_id: str) -> list[dict]:
         with self.connect() as conn:
@@ -220,15 +236,39 @@ class AppDB:
                 SELECT id
                 FROM operator_tickets
                 WHERE session_id = ?
-                  AND status IN ('new', 'in_progress')
+                AND status IN ('new', 'in_progress')
                 ORDER BY id DESC
                 LIMIT 1
                 """,
                 (session_id,),
             ).fetchone()
 
+            source_summary = json.dumps(sources, ensure_ascii=False)
+
             if row is not None:
-                return int(row["id"])
+                ticket_id = int(row["id"])
+
+                conn.execute(
+                    """
+                    UPDATE operator_tickets
+                    SET user_message = ?,
+                        intent = ?,
+                        risk_level = ?,
+                        escalation_reason = ?,
+                        source_summary = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        user_message,
+                        intent,
+                        risk_level,
+                        escalation_reason,
+                        source_summary,
+                        ticket_id,
+                    ),
+                )
+
+                return ticket_id
 
             cursor = conn.execute(
                 """
@@ -250,7 +290,7 @@ class AppDB:
                     intent,
                     risk_level,
                     escalation_reason,
-                    json.dumps(sources, ensure_ascii=False),
+                    source_summary,
                     now_iso(),
                 ),
             )

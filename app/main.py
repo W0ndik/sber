@@ -28,6 +28,8 @@ from app.services.kb_service import KnowledgeBaseService
 from app.services.ollama_service import OllamaService
 from app.services.vector_store import VectorStore
 
+MAX_DIALOG_MESSAGES_BEFORE_ESCALATION = 50
+
 settings = get_settings()
 
 db = AppDB(settings.sqlite_path)
@@ -438,21 +440,91 @@ def build_messages(
 
 
 def model_forced_escalation(answer: str) -> bool:
-    answer_lower = answer.lower()
+    answer_lower = normalize_for_match(answer)
 
-    escalation_markers = (
-        "нужен оператор",
-        "нужно обратиться к оператору",
-        "обратитесь к оператору",
-        "переведу на оператора",
-        "перевод на оператора",
-        "требуется оператор",
-        "рекомендую обратиться к оператору",
-        "рекомендуется обратиться к оператору",
-        "нужна помощь оператора",
+    escalation_patterns = (
+        r"\bнужен\s+оператор\b",
+        r"\bнужна\s+помощь\s+оператора\b",
+        r"\bнужно\s+обратиться\s+к\s+оператору\b",
+        r"\bнеобходимо\s+обратиться\s+к\s+оператору\b",
+        r"\bобратитесь\s+к\s+оператору\b",
+        r"\bрекомендую\s+обратиться\s+к\s+оператору\b",
+        r"\bрекомендуется\s+обратиться\s+к\s+оператору\b",
+        r"\bпереведу\s+на\s+оператора\b",
+        r"\bперевод\s+на\s+оператора\b",
+        r"\bперевода\s+на\s+оператора\b",
+        r"\bтребуется\s+перевод\s+на\s+оператора\b",
+        r"\bтребует\s+перевода\s+на\s+оператора\b",
+        r"\bтребуется\s+оператор\b",
+        r"\bтребуется\s+помощь\s+оператора\b",
     )
 
-    return any(marker in answer_lower for marker in escalation_markers)
+    return any(re.search(pattern, answer_lower) for pattern in escalation_patterns)
+
+
+def user_requests_operator(message: str) -> bool:
+    text = normalize_for_match(message)
+
+    patterns = (
+        r"\bдай(те)?\s+оператора\b",
+        r"\bпозов(и|ите)\s+оператора\b",
+        r"\bперевед(и|ите)\s+на\s+оператора\b",
+        r"\bсоедин(и|ите)\s+с\s+оператором\b",
+        r"\bхочу\s+оператора\b",
+        r"\bнужен\s+оператор\b",
+        r"\bживой\s+оператор\b",
+        r"\bчеловек\b",
+        r"\bподдержка\b",
+    )
+
+    return any(re.search(pattern, text) for pattern in patterns)
+
+
+def model_requests_clarification(answer: str) -> bool:
+    answer_lower = normalize_for_match(answer)
+
+    clarification_markers = (
+        "уточните",
+        "нужно уточнить",
+        "необходимо уточнить",
+        "требуется уточнить",
+        "требуется уточнение",
+        "нужны дополнительные данные",
+        "нужна дополнительная информация",
+        "недостаточно данных",
+        "недостаточно информации",
+        "не хватает данных",
+        "без уточнения",
+        "не могу определить",
+        "не могу проверить",
+    )
+
+    return any(marker in answer_lower for marker in clarification_markers)
+
+
+def build_ticket_context(
+    history: list[dict],
+    current_user_message: str,
+    assistant_answer: str,
+) -> str:
+    lines: list[str] = []
+
+    for item in history:
+        role = item.get("role")
+        content = str(item.get("content", "")).strip()
+
+        if not content:
+            continue
+
+        if role == "user":
+            lines.append(f"Клиент: {content}")
+        elif role == "assistant":
+            lines.append(f"Ассистент: {content}")
+
+    lines.append(f"Клиент: {current_user_message}")
+    lines.append(f"Ассистент: {assistant_answer}")
+
+    return "\n".join(lines).strip()
 
 
 @app.get("/")
@@ -611,6 +683,9 @@ def chat(request: ChatRequest) -> ChatResponse:
         else:
             session_id = db.create_session()
 
+        message_count_before = db.count_session_messages(session_id)
+        message_count_with_current_user_message = message_count_before + 1
+
         history = db.get_recent_messages(session_id, limit=6)
 
         raw_hits = kb.search(request.message, limit=max(settings.retrieval_limit, 20))
@@ -632,6 +707,23 @@ def chat(request: ChatRequest) -> ChatResponse:
             reason=reason,
         )
 
+        if user_requests_operator(request.message):
+            escalate = True
+            reason = "Клиент напрямую запросил перевод на оператора"
+
+        if message_count_with_current_user_message >= MAX_DIALOG_MESSAGES_BEFORE_ESCALATION:
+            limit_reason = (
+                f"Автоматическая эскалация: в диалоге достигнут лимит "
+                f"{MAX_DIALOG_MESSAGES_BEFORE_ESCALATION} сообщений"
+            )
+
+            if reason:
+                reason = f"{reason}; {limit_reason}"
+            else:
+                reason = limit_reason
+
+            escalate = True
+
         policy_answer = get_policy_template_answer(intent)
 
         if policy_answer is not None:
@@ -651,16 +743,24 @@ def chat(request: ChatRequest) -> ChatResponse:
             answer = ollama.chat(messages=messages, temperature=0.0)
             answer_mode = "llm"
 
-            if (not escalate) and model_forced_escalation(answer):
-                escalate = True
-                reason = "Модель рекомендовала перевод на оператора"
+            if not escalate:
+                if model_forced_escalation(answer):
+                    escalate = True
+                    reason = "Модель рекомендовала перевод на оператора"
+                elif model_requests_clarification(answer):
+                    escalate = True
+                    reason = "Модель запросила уточнение информации"
 
         operator_ticket_id = None
 
         if escalate:
             operator_ticket_id = db.create_or_get_open_ticket(
                 session_id=session_id,
-                user_message=request.message,
+                user_message=build_ticket_context(
+                    history=history,
+                    current_user_message=request.message,
+                    assistant_answer=answer,
+                ),
                 intent=intent,
                 risk_level=risk_level,
                 escalation_reason=reason or "Требуется проверка оператором",
