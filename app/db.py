@@ -2,7 +2,7 @@ import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -166,6 +166,76 @@ class AppDB:
             }
             for row in rows
         ]
+    
+    def cleanup_old_records(self, days: int = 30, vacuum: bool = True) -> dict:
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=days)
+        ).isoformat(timespec="seconds")
+
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+
+        try:
+            deleted: dict[str, int] = {}
+
+            cursor = conn.execute(
+                """
+                DELETE FROM operator_tickets
+                WHERE created_at < ?
+                """,
+                (cutoff,),
+            )
+            deleted["operator_tickets"] = cursor.rowcount
+
+            cursor = conn.execute(
+                """
+                DELETE FROM chat_turns
+                WHERE created_at < ?
+                """,
+                (cutoff,),
+            )
+            deleted["chat_turns"] = cursor.rowcount
+
+            cursor = conn.execute(
+                """
+                DELETE FROM chat_messages
+                WHERE created_at < ?
+                """,
+                (cutoff,),
+            )
+            deleted["chat_messages"] = cursor.rowcount
+
+            cursor = conn.execute(
+                """
+                DELETE FROM chat_sessions
+                WHERE created_at < ?
+                AND id NOT IN (
+                    SELECT DISTINCT session_id FROM chat_messages
+                )
+                AND id NOT IN (
+                    SELECT DISTINCT session_id FROM chat_turns
+                )
+                AND id NOT IN (
+                    SELECT DISTINCT session_id FROM operator_tickets
+                )
+                """,
+                (cutoff,),
+            )
+            deleted["chat_sessions"] = cursor.rowcount
+
+            conn.commit()
+
+            if vacuum:
+                conn.execute("VACUUM")
+
+            return {
+                "retention_days": days,
+                "cutoff": cutoff,
+                "deleted": deleted,
+            }
+
+        finally:
+            conn.close()
 
     def replace_indexed_documents(self, docs: list[tuple[str, int]]) -> None:
         with self.connect() as conn:

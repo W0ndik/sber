@@ -2,6 +2,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import re
+import asyncio
 
 from app.config import get_settings
 from app.db import AppDB
@@ -29,6 +30,8 @@ from app.services.ollama_service import OllamaService
 from app.services.vector_store import VectorStore
 
 MAX_DIALOG_MESSAGES_BEFORE_ESCALATION = 50
+SQLITE_RETENTION_DAYS = 30
+SQLITE_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 
 settings = get_settings()
 
@@ -43,6 +46,21 @@ app = FastAPI(
     title="Bank Support AI Assistant",
     version="0.5.6",
 )
+
+async def sqlite_cleanup_loop() -> None:
+    while True:
+        try:
+            result = db.cleanup_old_records(days=SQLITE_RETENTION_DAYS)
+            print(f"[sqlite-cleanup] {result}")
+        except Exception as exc:
+            print(f"[sqlite-cleanup] failed: {exc}")
+
+        await asyncio.sleep(SQLITE_CLEANUP_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def start_sqlite_cleanup_task() -> None:
+    asyncio.create_task(sqlite_cleanup_loop())
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
