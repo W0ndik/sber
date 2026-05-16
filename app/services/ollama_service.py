@@ -25,7 +25,7 @@ class OllamaService:
             },
         }
 
-        with httpx.Client(timeout=180.0) as client:
+        with httpx.Client(timeout=180.0, trust_env=False) as client:
             response = client.post(self._url("/api/chat"), json=payload)
             response.raise_for_status()
             data = response.json()
@@ -48,7 +48,7 @@ class OllamaService:
             "keep_alive": self.settings.embed_keep_alive,
         }
 
-        with httpx.Client(timeout=180.0) as client:
+        with httpx.Client(timeout=180.0, trust_env=False) as client:
             response = client.post(self._url("/api/embed"), json=payload)
             response.raise_for_status()
             data = response.json()
@@ -61,7 +61,7 @@ class OllamaService:
         return embeddings
 
     def tags(self) -> dict:
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=30.0, trust_env=False) as client:
             response = client.get(self._url("/api/tags"))
             response.raise_for_status()
             return response.json()
